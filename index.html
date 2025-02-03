@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { 
+            margin: 0; 
+            background-color: black; 
+            min-height: 100vh; 
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            padding: 0 15px;
+        }
+        .line {
+            position: relative;
+            height: 100vh;
+            width: 2px;
+            background-color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .button {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            left: 50%;
+            cursor: pointer;
+            top: 50%;
+        }
+        .synth { background-color: white; }
+        .drum { background-color: #ff6b6b; }
+        .synth.active { background-color: #00ff00; }
+        .drum.active { background-color: #ff0000; }
+        .visualization {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            height: 100px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library/build/nn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://algorithmicmusic.online/js/create-spectrum.js"></script>
+    <script src="https://algorithmicmusic.online/js/create-waveform.js"></script>
+</head>
+<body>
+    <div id="container"></div>
+    <div class="visualization"></div>
+
+    <script>
+        const container = document.getElementById('container');
+        const synthNotes = [220.00, 277.18, 329.63, 369.99, 440.00, 554.37, 659.25, 739.99, 880.00];
+        const drumNotes = ['C2', 'G2', 'C1', 'D3', 'A#2', 'F2', 'D2'];
+        
+        // Create visualizations
+        const wave = createWaveform()
+        const spec = createSpectrum({ range: [20, 7050] })
+        
+        // Create a master gain node for volume control
+        const masterGain = new Tone.Gain(0.75).toDestination()
+
+        // Create instruments with modern synthesis approach
+        const synthInstruments = synthNotes.map(() => {
+            const synth = new Tone.FMSynth({
+                modulationIndex: 0,
+                harmonicity: 1,
+                oscillator: {
+                    type: 'custom',
+                    partials: [1, 0.5, 0.3, 0.2]
+                }
+            }).connect(masterGain)
+            
+            // Connect to visualizations
+            synth.connect(wave)
+            synth.connect(spec)
+            
+            return synth
+        });
+
+        const drumInstruments = drumNotes.map((note, i) => {
+            let drum;
+            switch(i) {
+                case 0:
+                    drum = new Tone.MembraneSynth({
+                        frequency: 60,
+                        envelope: {
+                            attack: 0.01,
+                            decay: 0.2,
+                            sustain: 0
+                        }
+                    });
+                    break;
+                case 1:
+                case 3:
+                case 4:
+                    drum = new Tone.MetalSynth({
+                        frequency: 200,
+                        envelope: {
+                            attack: 0.001,
+                            decay: i === 3 ? 0.1 : 0.5,
+                            sustain: 0
+                        }
+                    });
+                    break;
+                default:
+                    drum = new Tone.MembraneSynth({
+                        envelope: {
+                            attack: 0.01,
+                            decay: 0.1,
+                            sustain: 0
+                        }
+                    });
+            }
+            drum.connect(masterGain)
+            drum.connect(wave)
+            drum.connect(spec)
+            return drum;
+        });
+
+        const isPlaying = new Array(synthNotes.length + drumNotes.length).fill(false);
+        const intervals = new Array(drumNotes.length).fill(null);
+
+        function createSlider(index, isDrum = false) {
+            const line = document.createElement('div');
+            line.className = 'line';
+            
+            const button = document.createElement('div');
+            button.className = `button ${isDrum ? 'drum' : 'synth'}`;
+            
+            button.onclick = function() {
+                if(isDrum) {
+                    const drumIndex = index - synthNotes.length;
+                    isPlaying[index] = !isPlaying[index];
+                    
+                    if(isPlaying[index]) {
+                        drumInstruments[drumIndex].triggerAttackRelease(drumNotes[drumIndex], '4n');
+                        button.classList.add('active');
+                        
+                        const y = button.offsetTop;
+                        const tempo = Math.max(50, Math.min(500, 500 - (y/window.innerHeight * 450)));
+                        
+                        intervals[drumIndex] = setInterval(() => {
+                            if(isPlaying[index]) {
+                                drumInstruments[drumIndex].triggerAttackRelease(drumNotes[drumIndex], '4n');
+                            }
+                        }, tempo);
+                    } else {
+                        button.classList.remove('active');
+                        clearInterval(intervals[drumIndex]);
+                    }
+                } else {
+                    isPlaying[index] = !isPlaying[index];
+                    if(isPlaying[index]) {
+                        synthInstruments[index].triggerAttack(synthNotes[index]);
+                        button.classList.add('active');
+                    } else {
+                        synthInstruments[index].triggerRelease();
+                        button.classList.remove('active');
+                    }
+                }
+            };
+
+            function updateAudioParams(y) {
+                if(isDrum) {
+                    const drumIndex = index - synthNotes.length;
+                    const tempo = Math.max(50, Math.min(500, 500 - (y/window.innerHeight * 450)));
+                    
+                    if(intervals[drumIndex]) {
+                        clearInterval(intervals[drumIndex]);
+                        intervals[drumIndex] = setInterval(() => {
+                            if(isPlaying[index]) {
+                                drumInstruments[drumIndex].triggerAttackRelease(drumNotes[drumIndex], '4n');
+                            }
+                        }, tempo);
+                    }
+                } else {
+                    const modulationAmount = y/window.innerHeight * 20;
+                    const harmonicityAmount = 1 + y/window.innerHeight * 4;
+                    synthInstruments[index].modulationIndex.value = modulationAmount;
+                    synthInstruments[index].harmonicity.value = harmonicityAmount;
+                }
+            }
+
+            button.onmousedown = function(event) {
+                if(event.button !== 0) return;
+                
+                function moveButton(event) {
+                    let y = Math.max(0, Math.min(event.clientY, window.innerHeight));
+                    button.style.top = y + 'px';
+                    updateAudioParams(y);
+                }
+                
+                document.addEventListener('mousemove', moveButton);
+                document.onmouseup = () => document.removeEventListener('mousemove', moveButton);
+                event.preventDefault();
+            };
+
+            line.appendChild(button);
+            return line;
+        }
+
+        // Create UI elements
+        for(let i = 0; i < synthNotes.length; i++) {
+            container.appendChild(createSlider(i));
+        }
+        for(let i = synthNotes.length; i < synthNotes.length + drumNotes.length; i++) {
+            container.appendChild(createSlider(i, true));
+        }
+
+        // Add volume control
+        const volumeControl = nn.create('input')
+            .set({
+                type: 'range',
+                min: 0,
+                max: 1,
+                step: 0.01,
+                value: 0.75
+            })
+            .addTo('body')
+            .on('input', (e) => {
+                masterGain.gain.value = e.target.value;
+            });
+
+        volumeControl.style.position = 'fixed';
+        volumeControl.style.top = '20px';
+        volumeControl.style.right = '20px';
+    </script>
+</body>
+</html>
